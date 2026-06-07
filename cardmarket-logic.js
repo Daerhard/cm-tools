@@ -173,13 +173,31 @@ window.CMTools = (function () {
         doc = new DOMParser().parseFromString(html, 'text/html');
       }
 
-      const rows = doc.querySelectorAll('.article-row');
-      if (rows.length === 0) break;
+      let rows = doc.querySelectorAll('.article-row');
+      if (rows.length === 0) rows = doc.querySelectorAll('[id^="articleRow"]');
+      if (rows.length === 0) rows = doc.querySelectorAll('[data-article-id]');
+
+      if (rows.length === 0) {
+        if (page === 1) {
+          const sampleIds = [...doc.querySelectorAll('[id]')]
+            .slice(0, 8).map(el => `${el.tagName.toLowerCase()}#${el.id}`).join(', ');
+          const sampleClasses = [...doc.querySelectorAll('[class]')]
+            .slice(0, 5).map(el => el.className.split(' ')[0]).join(', ');
+          log(`  Keine Zeilen gefunden. Erste IDs: ${sampleIds || '–'}`, true);
+          log(`  Erste Klassen: ${sampleClasses || '–'}`, true);
+        }
+        break;
+      }
+
       let added = 0;
 
       rows.forEach(row => {
-        const idMatch = row.id.match(/articleRow(\d+)/);
-        if (!idMatch || seenIds.has(idMatch[1])) return;
+        const articleId =
+          row.id.match(/articleRow(\d+)/)?.[1] ||
+          row.dataset.articleId ||
+          row.getAttribute('data-article-id') ||
+          row.querySelector('[data-article-id]')?.dataset.articleId;
+        if (!articleId || seenIds.has(articleId)) return;
 
         const nameLink = row.querySelector('a[href*="/Products/Singles/"]');
         if (!nameLink) return;
@@ -187,20 +205,25 @@ window.CMTools = (function () {
         const priceEl = row.querySelector(
           '.price-container .color-primary, ' +
           '.mobile-offer-container .color-primary, ' +
-          '.color-primary.fw-bold'
+          '.color-primary.fw-bold, ' +
+          '[class*="price"] .color-primary, ' +
+          '[class*="Price"] .color-primary'
         );
         const currentPrice = parseGermanFloat(priceEl?.textContent ?? '');
-        if (isNaN(currentPrice)) return;
+        if (isNaN(currentPrice)) {
+          log(`  Kein Preis gefunden für articleId=${articleId} (${nameLink.textContent.trim().slice(0, 30)})`, true);
+          return;
+        }
 
         const amountInput = row.querySelector(
-          'input[name="amount"], input.article-amount, input[data-amount]'
+          'input[name="amount"], input.article-amount, input[data-amount], input[name*="amount"]'
         );
-        const rawAmt  = amountInput ? parseInt(amountInput.value, 10) : NaN;
-        const amount  = Number.isFinite(rawAmt) && rawAmt >= 1 ? rawAmt : 1;
+        const rawAmt = amountInput ? parseInt(amountInput.value, 10) : NaN;
+        const amount = Number.isFinite(rawAmt) && rawAmt >= 1 ? rawAmt : 1;
 
-        seenIds.add(idMatch[1]);
+        seenIds.add(articleId);
         listings.push({
-          articleId:    idMatch[1],
+          articleId,
           cardName:     nameLink.textContent.trim(),
           cardUrl:      new URL(nameLink.getAttribute('href'), location.origin).toString(),
           currentPrice,

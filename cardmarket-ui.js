@@ -128,6 +128,7 @@
       #cmtools-panel .change-down  { color: #1565C0; }
       #cmtools-panel .change-floor { color: #ED6C02; font-style: italic; }
       #cmtools-panel .change-skip  { color: #888; }
+      #cmtools-panel .change-error { color: #C62828; font-style: italic; }
       #cmtools-panel input.cell-input {
         width: 100%; padding: 2px 4px; border: 1px solid #ccc;
         border-radius: 3px; font-size: 11px; box-sizing: border-box;
@@ -333,10 +334,34 @@
         fetched++;
 
         let comp = null;
-        try { comp = await fetchCheapestCommercial(listing); }
-        catch (err) {
+        let fetchError = null;
+        try {
+          comp = await fetchCheapestCommercial(listing);
+        } catch (err) {
+          fetchError = err.message;
           repLog(`  Fehler: ${err.message}`, true);
           if (/Cloudflare-Challenge/i.test(err.message)) throw err;
+          // retry once after a short pause
+          await throttle();
+          try {
+            comp = await fetchCheapestCommercial(listing);
+            fetchError = null;
+            repLog(`  Retry erfolgreich.`);
+          } catch (err2) {
+            repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
+            if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
+          }
+        }
+
+        if (fetchError) {
+          repData.push({
+            ...listing,
+            competitorPrice: null, competitorSeller: null,
+            newPrice: listing.currentPrice,
+            action: 'skip-error',
+            errorMsg: fetchError,
+          });
+          continue;
         }
 
         const dec = computeNewPrice(listing, comp, rule);
@@ -352,7 +377,8 @@
       renderRepPreview(repData);
       $('.rep-apply-btn').disabled  = !repData.some(r => r.action === 'reprice' || r.action === 'floor');
       $('.rep-export-btn').disabled = false;
-      repLog('Vorschau abgeschlossen.');
+      const errCount = repData.filter(r => r.action === 'skip-error').length;
+      repLog(`Vorschau abgeschlossen.${errCount ? ` ${errCount} Karten mit Fehler (rot markiert).` : ''}`);
     } catch (err) {
       repLog('FEHLER: ' + err.message, true);
       console.error('[CMTools]', err);
@@ -426,11 +452,13 @@
     const rows = data.map((r, i) => {
       const cls = r.action === 'floor'   ? 'change-floor'
                 : r.action === 'reprice' ? (r.newPrice > r.currentPrice ? 'change-up' : 'change-down')
+                : r.action === 'skip-error' ? 'change-error'
                 : 'change-skip';
 
       const newDisp = r.action.startsWith('skip')
         ? ({ 'skip-no-competitor': '– kein gewerbl.',
              'skip-duplicate':     '– Duplikat',
+             'skip-error':         '– Fehler',
            }[r.action] ?? '– keine Änderung')
         : fmtEur(r.newPrice) + ' €';
 
