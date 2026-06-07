@@ -217,7 +217,12 @@
           fetchError = err.message;
           repLog(`  Fehler: ${err.message}`, true);
           if (/Cloudflare-Challenge/i.test(err.message)) throw err;
-          await throttle();
+          if (/HTTP 429/.test(err.message)) {
+            repLog('  Rate-Limit erreicht — warte 45 Sekunden …');
+            await window.CMCore.sleep(45000);
+          } else {
+            await throttle();
+          }
           try {
             comp = await fetchCheapestCommercial(primary);
             fetchError = null;
@@ -225,6 +230,7 @@
           } catch (err2) {
             repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
             if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
+            if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Vorschau abgebrochen. Bitte einige Minuten warten.');
           }
         }
 
