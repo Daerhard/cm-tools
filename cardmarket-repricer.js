@@ -233,7 +233,7 @@
 
         const key = primary.cardUrl.split('?')[0];
         compMap.set(key, fetchError ? { error: fetchError } : { comp });
-      }, 2);
+      }, 1);
 
       // 5. Build repData for ALL listings with per-card rule
       repData = myListings.map(listing => {
