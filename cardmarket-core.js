@@ -7,8 +7,8 @@ window.CMCore = (function () {
 
   const USERNAME = 'DaerhardMerhard';
 
-  const THROTTLE_MIN_MS = 200;
-  const THROTTLE_MAX_MS = 450;
+  const THROTTLE_MIN_MS = 800;
+  const THROTTLE_MAX_MS = 1500;
 
   const RULES = {
     'Common':         { deduction: 0.01, minimum: 0.10 },
