@@ -167,6 +167,7 @@ window.CMCore = (function () {
         }
 
         const amountInput = row.querySelector(
+          `input[name="groupCountAmount${articleId}"], ` +
           'input[name="amount"], input.article-amount, input[data-amount], input[name*="amount" i]'
         );
         const rawAmt = amountInput ? parseInt(amountInput.value, 10) : NaN;
