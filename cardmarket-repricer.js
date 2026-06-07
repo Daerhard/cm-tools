@@ -7,8 +7,8 @@
   }
 
   const {
-    USERNAME, RULES,
-    fmtEur, round2, throttle, escapeHtml, downloadCsv, writeLog, todayIso,
+    USERNAME, fmtEur, round2, throttle,
+    escapeHtml, downloadCsv, writeLog, todayIso,
     scrapeMyListings, fetchCheapestCommercial,
     pageUrl, rule, ready, rarityDisplay, setName, panel,
   } = window.CMCore;
@@ -108,8 +108,11 @@
           : ', kein Mindestpreis'}.
       </div>
       <button class="action rep-preview-btn">Vorschau starten</button>
-      <button class="action apply  rep-apply-btn"  disabled>Preise anwenden</button>
-      <button class="action export rep-export-btn" disabled>Vorschau als CSV</button>
+      <button class="action apply  rep-apply-btn"   disabled>Preise anwenden</button>
+      <button class="action export rep-export-btn"  disabled>Vorschau als CSV</button>
+      <button class="action rep-include-btn" style="display:none;background:#6D4C41;">
+        Ausgeblendete einbeziehen
+      </button>
       <div class="preview rep-preview-area"></div>
       <div class="log rep-log"></div>
     ` : `
@@ -122,20 +125,25 @@
 
   if (!ready) return;
 
-  const $      = sel => tab.querySelector(sel);
+  const $       = sel => tab.querySelector(sel);
   const repArea  = $('.rep-preview-area');
   const repLogEl = $('.rep-log');
   const repLog   = (msg, isErr = false) => writeLog(repLogEl, msg, isErr, 'Repricer');
 
-  let repData = [];
+  let repData        = [];
+  let greyedIncluded = false;
 
   // ============================================================
-  // EVENTS
+  // VORSCHAU
   // ============================================================
 
   $('.rep-preview-btn').onclick = async () => {
     repLog('Vorschau wird erstellt …');
     repSetBusy(true);
+    greyedIncluded = false;
+    $('.rep-include-btn').textContent = 'Ausgeblendete einbeziehen';
+    repArea.classList.remove('greyed-included');
+
     try {
       const myListings = await scrapeMyListings(pageUrl, repLog);
       repLog(`${myListings.length} eigene Listings gefunden.`);
@@ -144,44 +152,50 @@
         return;
       }
 
+      // 1. Group by card URL, mark non-cheapest as duplicate
       const byCard = new Map();
       for (const l of myListings) {
         const key = l.cardUrl.split('?')[0];
         if (!byCard.has(key)) byCard.set(key, []);
         byCard.get(key).push(l);
       }
-      const lowestIds = new Set();
       for (const group of byCard.values()) {
         group.sort((a, b) => a.currentPrice - b.currentPrice);
-        lowestIds.add(group[0].articleId);
+        for (let i = 1; i < group.length; i++) group[i].greyedType = 'duplicate';
       }
-      const dupCount = myListings.length - lowestIds.size;
-      if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden übersprungen.`);
 
-      repData = [];
-      let fetched = 0;
-      for (let i = 0; i < myListings.length; i++) {
-        const listing = myListings[i];
-        if (!lowestIds.has(listing.articleId)) {
-          repData.push({ ...listing, competitorPrice: null, competitorSeller: null,
-                         newPrice: listing.currentPrice, action: 'skip-duplicate' });
-          continue;
+      // 2. Mark HR speculation cards
+      for (const l of myListings) {
+        if (!l.greyedType && l.comment.trim().toUpperCase() === 'HR') {
+          l.greyedType = 'hr';
         }
-        repLog(`(${i + 1}/${myListings.length}) ${listing.cardName} …`);
-        if (fetched > 0) await throttle();
-        fetched++;
+      }
+
+      const dupCount = myListings.filter(l => l.greyedType === 'duplicate').length;
+      const hrCount  = myListings.filter(l => l.greyedType === 'hr').length;
+      if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden ausgegraut.`);
+      if (hrCount  > 0) repLog(`${hrCount} Spekulationskarten (HR) werden ausgegraut.`);
+
+      // 3. Fetch competitor once per unique card (cheapest listing of each group)
+      const primaryListings = [...byCard.values()].map(g => g[0]);
+      const compMap = new Map();
+
+      for (let i = 0; i < primaryListings.length; i++) {
+        const primary = primaryListings[i];
+        repLog(`(${i + 1}/${primaryListings.length}) ${primary.cardName} …`);
+        if (i > 0) await throttle();
 
         let comp = null;
         let fetchError = null;
         try {
-          comp = await fetchCheapestCommercial(listing);
+          comp = await fetchCheapestCommercial(primary);
         } catch (err) {
           fetchError = err.message;
           repLog(`  Fehler: ${err.message}`, true);
           if (/Cloudflare-Challenge/i.test(err.message)) throw err;
           await throttle();
           try {
-            comp = await fetchCheapestCommercial(listing);
+            comp = await fetchCheapestCommercial(primary);
             fetchError = null;
             repLog(`  Retry erfolgreich.`);
           } catch (err2) {
@@ -190,32 +204,45 @@
           }
         }
 
-        if (fetchError) {
-          repData.push({
+        const key = primary.cardUrl.split('?')[0];
+        compMap.set(key, fetchError ? { error: fetchError } : { comp });
+      }
+
+      // 4. Build repData for ALL listings (including greyed)
+      repData = myListings.map(listing => {
+        const key   = listing.cardUrl.split('?')[0];
+        const entry = compMap.get(key) ?? { comp: null };
+
+        if (entry.error) {
+          return {
             ...listing,
             competitorPrice: null, competitorSeller: null,
             newPrice: listing.currentPrice,
-            action: 'skip-error',
-            errorMsg: fetchError,
-          });
-          continue;
+            action: 'skip-error', errorMsg: entry.error,
+            selected: false,
+          };
         }
 
-        const dec = computeNewPrice(listing, comp, rule);
-        repData.push({
+        const dec = computeNewPrice(listing, entry.comp, rule);
+        return {
           ...listing,
-          competitorPrice:  comp?.price  ?? null,
-          competitorSeller: comp?.seller ?? null,
-          newPrice: dec.price,
-          action:   dec.action,
-        });
-      }
+          competitorPrice:  entry.comp?.price  ?? null,
+          competitorSeller: entry.comp?.seller ?? null,
+          newPrice:  dec.price,
+          action:    dec.action,
+          selected: !listing.greyedType,
+        };
+      });
 
       renderRepPreview(repData);
-      $('.rep-apply-btn').disabled  = !repData.some(r => r.action === 'reprice' || r.action === 'floor');
+
+      const hasGreyed = repData.some(r => r.greyedType);
+      $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
+      $('.rep-apply-btn').disabled  = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
       $('.rep-export-btn').disabled = false;
+
       const errCount = repData.filter(r => r.action === 'skip-error').length;
-      repLog(`Vorschau abgeschlossen.${errCount ? ` ${errCount} Karten mit Fehler (rot markiert).` : ''}`);
+      repLog(`Vorschau abgeschlossen.${errCount ? ` ${errCount} Karten mit Fehler (rot).` : ''}`);
     } catch (err) {
       repLog('FEHLER: ' + err.message, true);
       console.error('[Repricer]', err);
@@ -223,6 +250,36 @@
       repSetBusy(false);
     }
   };
+
+  // ============================================================
+  // AUSGEBLENDETE EINBEZIEHEN
+  // ============================================================
+
+  $('.rep-include-btn').onclick = () => {
+    greyedIncluded = !greyedIncluded;
+    repArea.classList.toggle('greyed-included', greyedIncluded);
+
+    repData.forEach(r => {
+      if (!r.greyedType) return;
+      r.selected = greyedIncluded && !r.action.startsWith('skip');
+    });
+
+    repArea.querySelectorAll('.row-cb[data-greyed]').forEach(cb => {
+      cb.disabled = !greyedIncluded;
+      cb.checked  = greyedIncluded && !cb.dataset.skip;
+    });
+
+    $('.rep-include-btn').textContent = greyedIncluded
+      ? 'Ausgeblendete ausschließen'
+      : 'Ausgeblendete einbeziehen';
+
+    $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+    refreshRepSummary(repData);
+  };
+
+  // ============================================================
+  // PREISE ANWENDEN
+  // ============================================================
 
   $('.rep-apply-btn').onclick = async () => {
     const toApply = repData.filter(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
@@ -248,12 +305,18 @@
     repSetBusy(false);
   };
 
+  // ============================================================
+  // CSV EXPORT
+  // ============================================================
+
   $('.rep-export-btn').onclick = () => {
     downloadCsv(
       [
-        ['Karte', 'Rarity', 'Menge', 'Alt (€)', 'Konkurrent (€)', 'Konkurrent Verkäufer', 'Neu (€)', 'Aktion'],
+        ['Karte', 'Rarity', 'Menge', 'Kommentar', 'Typ', 'Alt (€)', 'Konkurrent (€)', 'Konkurrent Verkäufer', 'Neu (€)', 'Aktion'],
         ...repData.map(r => [
           r.cardName, rarityDisplay, r.amount,
+          r.comment ?? '',
+          r.greyedType ?? 'normal',
           r.currentPrice.toFixed(2),
           r.competitorPrice != null ? r.competitorPrice.toFixed(2) : '',
           r.competitorSeller ?? '',
@@ -266,7 +329,7 @@
   };
 
   // ============================================================
-  // RENDER
+  // HELPERS
   // ============================================================
 
   function repSetBusy(busy) {
@@ -274,21 +337,40 @@
     if (busy) {
       $('.rep-apply-btn').disabled  = true;
       $('.rep-export-btn').disabled = true;
+      $('.rep-include-btn').disabled = true;
+    } else {
+      $('.rep-include-btn').disabled = false;
     }
   }
 
-  function renderRepPreview(data) {
-    if (!data.length) { repArea.innerHTML = '<em>Keine Listings.</em>'; return; }
+  function refreshRepSummary(data) {
+    const box = repArea.querySelector('#rep-summary');
+    if (!box) return;
 
-    data.forEach(r => { r.selected = !r.action.startsWith('skip'); });
-
-    const total    = data.length;
-    const items    = data.reduce((s, r) => s + (r.amount || 1), 0);
-    const curTotal = round2(data.reduce((s, r) => s + r.currentPrice * (r.amount || 1), 0));
-    const newTotal = round2(data.reduce((s, r) => s + r.newPrice    * (r.amount || 1), 0));
+    const sel      = data.filter(r => r.selected);
+    const total    = sel.length;
+    const items    = sel.reduce((s, r) => s + (r.amount || 1), 0);
+    const curTotal = round2(sel.reduce((s, r) => s + r.currentPrice * (r.amount || 1), 0));
+    const newTotal = round2(sel.reduce((s, r) => s + r.newPrice    * (r.amount || 1), 0));
     const delta    = round2(newTotal - curTotal);
     const deltaStr = (delta >= 0 ? '+' : '') + fmtEur(delta);
     const deltaCls = delta >= 0 ? 'delta-pos' : 'delta-neg';
+
+    box.innerHTML = `
+      <div class="summary-row"><span>Ausgewählte Listings / Artikel</span><strong>${total} / ${items}</strong></div>
+      <hr>
+      <div class="summary-row"><span>Aktueller Gesamtwert</span><strong>${fmtEur(curTotal)} €</strong></div>
+      <div class="summary-row"><span>Neuer Gesamtwert</span>    <strong>${fmtEur(newTotal)} €</strong></div>
+      <div class="summary-row"><span>Differenz</span>           <strong class="${deltaCls}">${deltaStr} €</strong></div>
+    `;
+  }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
+  function renderRepPreview(data) {
+    if (!data.length) { repArea.innerHTML = '<em>Keine Listings.</em>'; return; }
 
     const rows = data.map((r, i) => {
       const cls = r.action === 'floor'      ? 'change-floor'
@@ -296,24 +378,40 @@
                 : r.action === 'skip-error' ? 'change-error'
                 : 'change-skip';
 
-      const newDisp = r.action.startsWith('skip')
+      const isSkip = r.action.startsWith('skip');
+
+      const newDisp = isSkip
         ? ({ 'skip-no-competitor': '– kein gewerbl.',
-             'skip-duplicate':     '– Duplikat',
+             'skip-no-change':     '– keine Änderung',
              'skip-error':         '– Fehler',
            }[r.action] ?? '– keine Änderung')
         : fmtEur(r.newPrice) + ' €';
 
       const compDisp = r.competitorPrice != null ? fmtEur(r.competitorPrice) + ' €' : '–';
-      const dStr     = r.action.startsWith('skip') ? ''
+      const dStr     = isSkip ? ''
         : ((r.newPrice - r.currentPrice >= 0) ? '+' : '') + fmtEur(r.newPrice - r.currentPrice);
 
-      const isSkip = r.action.startsWith('skip');
-      return `<tr class="${cls}">
+      // Checkbox state:
+      // - isSkip (no greyedType) → always disabled
+      // - greyedType            → disabled until "include", marked data-greyed
+      // - normal reprice/floor  → enabled
+      const isGreyed        = !!r.greyedType;
+      const isGreyedToggleable = isGreyed && !isSkip;
+      const cbDisabled      = isSkip || isGreyed;
+
+      const greyedLabel = r.greyedType === 'hr'        ? ' [HR]'
+                        : r.greyedType === 'duplicate' ? ' [Duplikat]'
+                        : '';
+
+      return `<tr class="${cls}${isGreyed ? ' row-greyed' : ''}">
         <td class="cb">
           <input type="checkbox" class="row-cb" data-idx="${i}"
-            ${r.selected ? 'checked' : ''} ${isSkip ? 'disabled' : ''}>
+            ${r.selected ? 'checked' : ''}
+            ${cbDisabled ? 'disabled' : ''}
+            ${isGreyedToggleable ? 'data-greyed="1"' : ''}
+            ${isGreyedToggleable && isSkip ? 'data-skip="1"' : ''}>
         </td>
-        <td>${escapeHtml(r.cardName)}</td>
+        <td>${escapeHtml(r.cardName)}<span style="color:#aaa;font-size:10px;">${greyedLabel}</span></td>
         <td class="num">${r.amount || 1}</td>
         <td class="num">${fmtEur(r.currentPrice)}</td>
         <td class="num">${compDisp}</td>
@@ -323,42 +421,46 @@
     }).join('');
 
     repArea.innerHTML = `
-      <div class="summary" style="margin-bottom:8px;">
-        <div class="summary-row"><span>Listings / Artikel</span><strong>${total} / ${items}</strong></div>
-        <hr>
-        <div class="summary-row"><span>Aktueller Gesamtwert</span><strong>${fmtEur(curTotal)} €</strong></div>
-        <div class="summary-row"><span>Neuer Gesamtwert</span>    <strong>${fmtEur(newTotal)} €</strong></div>
-        <div class="summary-row"><span>Differenz</span>           <strong class="${deltaCls}">${deltaStr} €</strong></div>
-      </div>
+      <div class="summary" style="margin-bottom:8px;" id="rep-summary"></div>
       <table>
         <thead><tr>
-          <th class="cb"><input type="checkbox" class="master-cb" checked></th>
+          <th class="cb"><input type="checkbox" class="master-cb"></th>
           <th>Karte</th><th>Mng</th><th>Alt</th><th>Konk.</th><th>Neu</th><th>Δ</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
 
+    refreshRepSummary(data);
     wireRepCheckboxes(repArea, data);
   }
 
   function wireRepCheckboxes(container, data) {
     const master = container.querySelector('.master-cb');
+
+    const updateMaster = () => {
+      const enabled = [...container.querySelectorAll('.row-cb:not(:disabled)')];
+      master.checked       = enabled.length > 0 && enabled.every(c => c.checked);
+      master.indeterminate = !master.checked && enabled.some(c => c.checked);
+    };
+
     master.addEventListener('change', () => {
       container.querySelectorAll('.row-cb:not(:disabled)').forEach(cb => {
         cb.checked = master.checked;
         data[+cb.dataset.idx].selected = master.checked;
       });
+      refreshRepSummary(data);
     });
+
     container.querySelectorAll('.row-cb').forEach(cb => {
       cb.addEventListener('change', () => {
         data[+cb.dataset.idx].selected = cb.checked;
-        const enabled = [...container.querySelectorAll('.row-cb:not(:disabled)')];
-        const all  = enabled.every(c => c.checked);
-        const none = enabled.every(c => !c.checked);
-        master.checked = all;
-        master.indeterminate = !all && !none;
+        updateMaster();
+        $('.rep-apply-btn').disabled = !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+        refreshRepSummary(data);
       });
     });
+
+    updateMaster();
   }
 
 })();
