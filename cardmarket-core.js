@@ -178,11 +178,8 @@ window.CMCore = (function () {
         );
         const comment = (commentEl?.value ?? commentEl?.textContent ?? '').trim();
 
-        const rarityEl = row.querySelector(
-          '[class*="rarity"], .rarity, .product-rarity, ' +
-          '[class*="Rarity"], .badge-rarity'
-        );
-        const rarity = rarityEl?.textContent?.trim() ?? '';
+        const rarityEl = row.querySelector('svg[aria-label], [aria-label*="Rare"], [aria-label*="Common"]');
+        const rarity = rarityEl?.getAttribute('aria-label')?.trim() ?? '';
 
         seenIds.add(articleId);
         listings.push({
