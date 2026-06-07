@@ -167,14 +167,14 @@ window.CMCore = (function () {
         }
 
         const amountInput = row.querySelector(
-          'input[name="amount"], input.article-amount, input[data-amount], input[name*="amount"]'
+          'input[name="amount"], input.article-amount, input[data-amount], input[name*="amount" i]'
         );
         const rawAmt = amountInput ? parseInt(amountInput.value, 10) : NaN;
         const amount = Number.isFinite(rawAmt) && rawAmt >= 1 ? rawAmt : 1;
 
         const commentEl = row.querySelector(
           'textarea[name="comments"], input[name="comments"], ' +
-          '.article-comment, [class*="comment"] .value'
+          '.product-comments, [class*="product-comments"], .article-comment'
         );
         const comment = (commentEl?.value ?? commentEl?.textContent ?? '').trim();
 
