@@ -166,11 +166,14 @@ window.CMCore = (function () {
           return;
         }
 
+        const amountSpan  = row.querySelector('span.item-count');
         const amountInput = row.querySelector(
           `input[name="groupCountAmount${articleId}"], ` +
           'input[name="amount"], input.article-amount, input[data-amount], input[name*="amount" i]'
         );
-        const rawAmt = amountInput ? parseInt(amountInput.value, 10) : NaN;
+        const rawAmt = amountSpan
+          ? parseInt(amountSpan.textContent.trim(), 10)
+          : amountInput ? parseInt(amountInput.value, 10) : NaN;
         const amount = Number.isFinite(rawAmt) && rawAmt >= 1 ? rawAmt : 1;
 
         const commentEl = row.querySelector(
