@@ -9,7 +9,7 @@
   const {
     USERNAME, RULES,
     fmtEur, round2, throttle,
-    escapeHtml, writeLog, todayIso,
+    escapeHtml, writeLog,
     scrapeMyListings, fetchCheapestCommercial,
     pageUrl, repricerReady, rarityDisplay, setName, panel,
   } = window.CMCore;
@@ -88,7 +88,6 @@
     }
   }
 
-  // Runs up to `concurrency` fetches in parallel
   async function fetchPool(items, fn, concurrency) {
     const results = new Array(items.length).fill(null);
     let next = 0;
@@ -119,6 +118,7 @@
         <button class="action rep-preview-btn">&#9654; Vorschau</button>
         <button class="action rep-include-btn" style="display:none;background:#6D4C41;">Einbeziehen</button>
         <button class="action apply rep-apply-btn" disabled>&#10003; Anwenden</button>
+        <button class="action rep-next-btn" style="display:none;background:#1565C0;">&#8594; Weiter</button>
       </div>
       <div class="preview rep-preview-area"></div>
       <div class="log rep-log"></div>
@@ -138,8 +138,13 @@
   const repLogEl = $('.rep-log');
   const repLog   = (msg, isErr = false) => writeLog(repLogEl, msg, isErr, 'Repricer');
 
+  const BATCH_SIZE = 50;
+
   let repData        = [];
   let greyedIncluded = false;
+  let allMyListings  = [];
+  let primaryListings = [];
+  let batchIndex     = 0;
 
   // ============================================================
   // VORSCHAU
@@ -149,20 +154,22 @@
     repLog('Vorschau wird erstellt …');
     repSetBusy(true);
     greyedIncluded = false;
-    $('.rep-include-btn').textContent = 'Ausgeblendete einbeziehen';
+    batchIndex = 0;
     repArea.classList.remove('greyed-included');
+    $('.rep-include-btn').style.display = 'none';
+    $('.rep-next-btn').style.display    = 'none';
 
     try {
-      const myListings = await scrapeMyListings(pageUrl, repLog);
-      repLog(`${myListings.length} eigene Listings gefunden.`);
-      if (!myListings.length) {
+      allMyListings = await scrapeMyListings(pageUrl, repLog);
+      repLog(`${allMyListings.length} eigene Listings gefunden.`);
+      if (!allMyListings.length) {
         repLog('Nichts zu tun. Stelle sicher, dass Listings geladen sind.', true);
         return;
       }
 
-      // 1. Group by card URL, mark non-cheapest as duplicate
+      // Group by card URL, mark non-cheapest as duplicate
       const byCard = new Map();
-      for (const l of myListings) {
+      for (const l of allMyListings) {
         const key = l.cardUrl.split('?')[0];
         if (!byCard.has(key)) byCard.set(key, []);
         byCard.get(key).push(l);
@@ -172,85 +179,97 @@
         for (let i = 1; i < group.length; i++) group[i].greyedType = 'duplicate';
       }
 
-      // 2. Mark HR speculation cards
-      for (const l of myListings) {
+      // Mark HR speculation cards
+      for (const l of allMyListings) {
         if (!l.greyedType && l.comment.trim().toUpperCase() === 'HR') {
           l.greyedType = 'hr';
         }
       }
 
-      // 3. Skip listings with unsupported rarity
+      // Mark unsupported rarity
       const skippedRarity = [];
-      for (const l of myListings) {
+      for (const l of allMyListings) {
         if (!l.greyedType && l.rarity && !RULES[l.rarity]) {
           l.greyedType = 'unsupported-rarity';
           skippedRarity.push(l.rarity);
         }
       }
       if (skippedRarity.length) {
-        const unique = [...new Set(skippedRarity)];
-        repLog(`Übersprungen (nicht unterstützte Rarity): ${unique.join(', ')}`);
+        repLog(`Übersprungen (nicht unterstützte Rarity): ${[...new Set(skippedRarity)].join(', ')}`);
       }
 
-      const dupCount = myListings.filter(l => l.greyedType === 'duplicate').length;
-      const hrCount  = myListings.filter(l => l.greyedType === 'hr').length;
+      const dupCount = allMyListings.filter(l => l.greyedType === 'duplicate').length;
+      const hrCount  = allMyListings.filter(l => l.greyedType === 'hr').length;
       if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden ausgegraut.`);
       if (hrCount  > 0) repLog(`${hrCount} Spekulationskarten (HR) werden ausgegraut.`);
 
-      // 4. Fetch competitor in batches of 50, 1-minute pause between batches
-      const primaryListings = [...byCard.values()].map(g => g[0]);
-      const total      = primaryListings.length;
-      const BATCH_SIZE  = 50;
-      const BATCH_PAUSE = 60_000;
+      primaryListings = [...byCard.values()].map(g => g[0]);
+      const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
+      repLog(`${primaryListings.length} einzigartige Karten — ${batchTotal} Batch(es) à ${BATCH_SIZE}.`);
 
-      const compMap = new Map();
-      let done = 0;
+      await runBatch(0);
+    } catch (err) {
+      repLog('FEHLER: ' + err.message, true);
+      console.error('[Repricer]', err);
+    } finally {
+      repSetBusy(false);
+    }
+  };
 
-      for (let bStart = 0; bStart < primaryListings.length; bStart += BATCH_SIZE) {
-        if (bStart > 0) {
-          const bNum   = Math.floor(bStart / BATCH_SIZE) + 1;
-          const bTotal = Math.ceil(total / BATCH_SIZE);
-          repLog(`Batch ${bNum}/${bTotal} — warte 60 Sekunden …`);
-          await window.CMCore.sleep(BATCH_PAUSE);
+  // ============================================================
+  // BATCH LADEN
+  // ============================================================
+
+  async function runBatch(bIdx) {
+    const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
+    const batch      = primaryListings.slice(bIdx * BATCH_SIZE, (bIdx + 1) * BATCH_SIZE);
+    const offset     = bIdx * BATCH_SIZE;
+
+    repLog(`Batch ${bIdx + 1}/${batchTotal} — lade ${batch.length} Karten …`);
+
+    const compMap = new Map();
+    let done = 0;
+
+    await fetchPool(batch, async (primary) => {
+      if (done > 0) await throttle();
+      done++;
+      repLog(`(${offset + done}/${primaryListings.length}) ${primary.cardName} …`);
+
+      let comp = null;
+      let fetchError = null;
+      try {
+        comp = await fetchCheapestCommercial(primary);
+      } catch (err) {
+        fetchError = err.message;
+        repLog(`  Fehler: ${err.message}`, true);
+        if (/Cloudflare-Challenge/i.test(err.message)) throw err;
+        if (/HTTP 429/.test(err.message)) {
+          repLog('  Rate-Limit — warte 45 Sekunden …');
+          await window.CMCore.sleep(45000);
+        } else {
+          await throttle();
         }
-
-        await fetchPool(primaryListings.slice(bStart, bStart + BATCH_SIZE), async (primary) => {
-          if (done > 0) await throttle();
-          done++;
-          repLog(`(${done}/${total}) ${primary.cardName} …`);
-
-          let comp = null;
-          let fetchError = null;
-          try {
-            comp = await fetchCheapestCommercial(primary);
-          } catch (err) {
-            fetchError = err.message;
-            repLog(`  Fehler: ${err.message}`, true);
-            if (/Cloudflare-Challenge/i.test(err.message)) throw err;
-            if (/HTTP 429/.test(err.message)) {
-              repLog('  Rate-Limit trotz Batch — warte 45 Sekunden …');
-              await window.CMCore.sleep(45000);
-            } else {
-              await throttle();
-            }
-            try {
-              comp = await fetchCheapestCommercial(primary);
-              fetchError = null;
-              repLog(`  Retry erfolgreich.`);
-            } catch (err2) {
-              repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
-              if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
-              if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Vorschau abgebrochen. Bitte einige Minuten warten.');
-            }
-          }
-
-          const key = primary.cardUrl.split('?')[0];
-          compMap.set(key, fetchError ? { error: fetchError } : { comp });
-        }, 1);
+        try {
+          comp = await fetchCheapestCommercial(primary);
+          fetchError = null;
+          repLog('  Retry erfolgreich.');
+        } catch (err2) {
+          repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
+          if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
+          if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Batch abgebrochen. Bitte einige Minuten warten.');
+        }
       }
 
-      // 5. Build repData for ALL listings with per-card rule
-      repData = myListings.map(listing => {
+      const key = primary.cardUrl.split('?')[0];
+      compMap.set(key, fetchError ? { error: fetchError } : { comp });
+    }, 1);
+
+    // Build repData for this batch's listings only
+    const batchKeys = new Set(batch.map(p => p.cardUrl.split('?')[0]));
+
+    repData = allMyListings
+      .filter(l => batchKeys.has(l.cardUrl.split('?')[0]))
+      .map(listing => {
         const key   = listing.cardUrl.split('?')[0];
         const entry = compMap.get(key) ?? { comp: null };
         const r     = RULES[listing.rarity] ?? null;
@@ -259,13 +278,11 @@
           return { ...listing, competitorPrice: null, competitorSeller: null,
                    newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
         }
-
         if (entry.error) {
           return { ...listing, competitorPrice: null, competitorSeller: null,
                    newPrice: listing.currentPrice, action: 'skip-error',
                    errorMsg: entry.error, selected: false };
         }
-
         if (!r) {
           return { ...listing, competitorPrice: null, competitorSeller: null,
                    newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
@@ -282,21 +299,15 @@
         };
       });
 
-      renderRepPreview(repData);
+    renderRepPreview(repData);
 
-      const hasGreyed = repData.some(r => r.greyedType);
-      $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
-      $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+    const hasGreyed = repData.some(r => r.greyedType);
+    $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
+    $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
 
-      const errCount = repData.filter(r => r.action === 'skip-error').length;
-      repLog(`Vorschau abgeschlossen.${errCount ? ` ${errCount} Karten mit Fehler (rot).` : ''}`);
-    } catch (err) {
-      repLog('FEHLER: ' + err.message, true);
-      console.error('[Repricer]', err);
-    } finally {
-      repSetBusy(false);
-    }
-  };
+    const errCount = repData.filter(r => r.action === 'skip-error').length;
+    repLog(`Batch ${bIdx + 1}/${batchTotal} bereit.${errCount ? ` ${errCount} Fehler.` : ''}`);
+  }
 
   // ============================================================
   // AUSGEBLENDETE EINBEZIEHEN
@@ -316,10 +327,7 @@
       cb.checked  = greyedIncluded;
     });
 
-    $('.rep-include-btn').textContent = greyedIncluded
-      ? 'Ausgeblendete ausschließen'
-      : 'Ausgeblendete einbeziehen';
-
+    $('.rep-include-btn').textContent = greyedIncluded ? 'Ausblenden' : 'Einbeziehen';
     $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
     refreshRepSummary(repData);
   };
@@ -350,6 +358,34 @@
     }
     repLog(`Fertig: ${ok} angepasst, ${fail} Fehler.`);
     repSetBusy(false);
+
+    const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
+    if (batchIndex + 1 < batchTotal) {
+      const nextNum = batchIndex + 2;
+      $('.rep-next-btn').textContent = `→ Batch ${nextNum}/${batchTotal} laden`;
+      $('.rep-next-btn').style.display = 'block';
+    }
+  };
+
+  // ============================================================
+  // NÄCHSTER BATCH
+  // ============================================================
+
+  $('.rep-next-btn').onclick = async () => {
+    batchIndex++;
+    greyedIncluded = false;
+    repArea.classList.remove('greyed-included');
+    $('.rep-include-btn').style.display = 'none';
+    $('.rep-next-btn').style.display    = 'none';
+    repSetBusy(true);
+    try {
+      await runBatch(batchIndex);
+    } catch (err) {
+      repLog('FEHLER: ' + err.message, true);
+      console.error('[Repricer]', err);
+    } finally {
+      repSetBusy(false);
+    }
   };
 
   // ============================================================
@@ -357,9 +393,10 @@
   // ============================================================
 
   function repSetBusy(busy) {
-    $('.rep-preview-btn').disabled   = busy;
-    $('.rep-apply-btn').disabled     = busy || true;
-    $('.rep-include-btn').disabled   = busy;
+    $('.rep-preview-btn').disabled  = busy;
+    $('.rep-next-btn').disabled     = busy;
+    $('.rep-include-btn').disabled  = busy;
+    if (busy) $('.rep-apply-btn').disabled = true;
   }
 
   function refreshRepSummary(data) {
@@ -411,7 +448,7 @@
       const dStr     = isSkip ? ''
         : ((r.newPrice - r.currentPrice >= 0) ? '+' : '') + fmtEur(r.newPrice - r.currentPrice);
 
-      const isGreyed          = !!r.greyedType;
+      const isGreyed           = !!r.greyedType;
       const isGreyedToggleable = isGreyed && !isSkip;
 
       const greyedLabel = r.greyedType === 'hr'        ? ' [HR]'
