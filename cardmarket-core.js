@@ -289,8 +289,8 @@ window.CMCore = (function () {
   panel.innerHTML = `
     <style>
       #cmtools-panel {
-        position: fixed; top: 80px; right: 20px;
-        width: 480px; max-height: calc(100vh - 100px);
+        position: fixed; top: 80px; left: calc(100vw - 500px);
+        width: 480px; max-height: calc(100vh - 60px);
         background: #fff; border: 2px solid #1F3864;
         border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.25);
         font-family: Arial, sans-serif; font-size: 13px; color: #222;
@@ -300,12 +300,19 @@ window.CMCore = (function () {
         background: #1F3864; color: #fff; padding: 10px 14px;
         font-weight: bold; border-radius: 6px 6px 0 0;
         display: flex; justify-content: space-between; align-items: center;
-        flex-shrink: 0;
+        flex-shrink: 0; cursor: grab; user-select: none;
       }
-      #cmtools-panel header button.close {
+      #cmtools-panel header button.close,
+      #cmtools-panel header button.minimize {
         background: transparent; border: none; color: #fff;
-        font-size: 22px; cursor: pointer; padding: 0 4px; line-height: 1;
+        font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1;
       }
+      #cmtools-panel .panel-body {
+        flex: 1; display: flex; flex-direction: column;
+        overflow: hidden; min-height: 0;
+      }
+      #cmtools-panel.minimized .panel-body { display: none; }
+      #cmtools-panel.minimized { max-height: none; }
       #cmtools-panel .tabs {
         display: flex; flex-shrink: 0;
         background: #F5F5F5; border-bottom: 2px solid #1F3864;
@@ -318,14 +325,22 @@ window.CMCore = (function () {
       #cmtools-panel .tab:last-child { border-right: none; }
       #cmtools-panel .tab.active     { background: #fff; color: #1F3864; }
       #cmtools-panel .tab:hover:not(.active) { background: #EEE; }
-      #cmtools-panel .tab-content         { display: none; padding: 12px 14px; overflow-y: auto; }
-      #cmtools-panel .tab-content.active  { display: block; }
-      #cmtools-panel .info { margin-bottom: 10px; line-height: 1.6; }
-      #cmtools-panel .info .key { color: #777; display: inline-block; width: 60px; }
-      #cmtools-panel .rule-box {
-        background: #F2F6FB; padding: 8px 10px; border-radius: 4px;
-        margin-bottom: 10px; font-size: 12px; line-height: 1.5;
+      #cmtools-panel .tab-content        { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+      #cmtools-panel .tab-content.active { display: flex; }
+      #cmtools-panel .tool-info-bar {
+        padding: 5px 14px; background: #F5F5F5; border-bottom: 1px solid #eee;
+        font-size: 11px; flex-shrink: 0; color: #555;
+        display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
       }
+      #cmtools-panel .tool-info-bar .key {
+        color: #999; font-size: 10px; text-transform: uppercase;
+        letter-spacing: .04em; margin-right: 3px;
+      }
+      #cmtools-panel .tool-toolbar {
+        display: flex; gap: 6px; padding: 8px 10px;
+        flex-shrink: 0; border-bottom: 1px solid #eee;
+      }
+      #cmtools-panel .tool-toolbar .action { flex: 1; margin: 0; padding: 7px 4px; font-size: 12px; }
       #cmtools-panel button.action {
         display: block; width: 100%; padding: 8px; margin-top: 6px;
         background: #1F3864; color: #fff; border: none; border-radius: 4px;
@@ -339,7 +354,7 @@ window.CMCore = (function () {
       #cmtools-panel button.action.create:hover:not(:disabled) { background: #388E3C; }
       #cmtools-panel button.action.export { background: #555; }
       #cmtools-panel .preview {
-        margin-top: 10px; max-height: 340px; overflow-y: auto;
+        flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px;
       }
       #cmtools-panel table { width: 100%; border-collapse: collapse; font-size: 11px; }
       #cmtools-panel th, #cmtools-panel td {
@@ -378,10 +393,10 @@ window.CMCore = (function () {
         color: #1F3864; border-radius: 3px; cursor: pointer;
       }
       #cmtools-panel .log {
-        margin-top: 8px; padding: 6px 8px; background: #FAFAFA;
+        flex-shrink: 0; padding: 6px 8px; background: #FAFAFA;
         font-family: ui-monospace, monospace; font-size: 11px;
         max-height: 110px; overflow-y: auto;
-        border: 1px solid #eee; border-radius: 4px; line-height: 1.4;
+        border-top: 1px solid #eee; line-height: 1.4;
       }
       #cmtools-panel .log .err { color: #C62828; }
       #cmtools-panel .summary {
@@ -399,14 +414,19 @@ window.CMCore = (function () {
     </style>
     <header>
       <span>Cardmarket Tools</span>
-      <button class="close" title="Schließen">×</button>
+      <div style="display:flex;gap:2px;align-items:center">
+        <button class="minimize" title="Minimieren">−</button>
+        <button class="close"    title="Schließen">×</button>
+      </div>
     </header>
-    <nav class="tabs">
-      <button class="tab active" data-tab="repricer">Repricer</button>
-      <button class="tab"        data-tab="stockfiller">Stock Filler</button>
-    </nav>
-    <div class="tab-content tab-repricer active"></div>
-    <div class="tab-content tab-stockfiller"></div>
+    <div class="panel-body">
+      <nav class="tabs">
+        <button class="tab active" data-tab="repricer">Repricer</button>
+        <button class="tab"        data-tab="stockfiller">Stock Filler</button>
+      </nav>
+      <div class="tab-content tab-repricer active"></div>
+      <div class="tab-content tab-stockfiller"></div>
+    </div>
   `;
   document.body.appendChild(panel);
 
@@ -420,6 +440,33 @@ window.CMCore = (function () {
     });
   });
   panel.querySelector('header .close').onclick = () => panel.remove();
+
+  panel.querySelector('header .minimize').onclick = () => {
+    const isMin = panel.classList.toggle('minimized');
+    panel.querySelector('header .minimize').textContent = isMin ? '+' : '−';
+  };
+
+  {
+    let dragging = false, ox = 0, oy = 0;
+    const hdr = panel.querySelector('header');
+    hdr.addEventListener('mousedown', e => {
+      if (e.target.tagName === 'BUTTON') return;
+      dragging = true;
+      const r = panel.getBoundingClientRect();
+      panel.style.left  = r.left + 'px';
+      panel.style.top   = r.top  + 'px';
+      panel.style.right = 'auto';
+      ox = e.clientX - r.left;
+      oy = e.clientY - r.top;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      panel.style.left = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  e.clientX - ox)) + 'px';
+      panel.style.top  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - oy)) + 'px';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+  }
 
   // ============================================================
   // PUBLIC API

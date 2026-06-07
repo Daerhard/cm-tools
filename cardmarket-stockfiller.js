@@ -127,19 +127,15 @@
   const tab     = panel.querySelector('.tab-stockfiller');
 
   tab.innerHTML = `
-    <div class="info">
-      <div><span class="key">Set:</span>     <strong>${escapeHtml(setName)}</strong></div>
-      <div><span class="key">Rarity:</span>  <strong>${escapeHtml(rarityDisplay)}</strong></div>
-      <div><span class="key">Account:</span> <strong>${escapeHtml(USERNAME)}</strong></div>
+    <div class="tool-info-bar">
+      <span><span class="key">Set</span> <strong>${escapeHtml(setName)}</strong></span>
+      <span><span class="key">Rarity</span> <strong>${escapeHtml(rarityDisplay)}</strong></span>
     </div>
     ${ready ? `
-      <div class="rule-box">
-        <strong>Defaults:</strong> Menge ${DEFAULT_AMOUNT}, Sprache Deutsch, First Edition aktiv.
-        Preis = günstigster gewerblicher − ${fmtEur(rule.deduction)} €,
-        Mindestpreis <strong>${fmtEur(sfFloor)} €</strong>.
+      <div class="tool-toolbar">
+        <button class="action sf-find-btn">&#128269; Lücken finden</button>
       </div>
-      <button class="action sf-find-btn">Lücken finden</button>
-      <div class="sf-bulk-controls" style="display:none">
+      <div class="sf-bulk-controls" style="display:none;flex-shrink:0;border-bottom:1px solid #eee;padding:0 10px 8px;">
         <div class="bulk-bar">
           <label>Setze für alle:</label>
           <input type="number" min="1" placeholder="Menge" class="sf-bulk-amount" style="width:60px;">
@@ -169,8 +165,10 @@
       <div class="preview sf-preview-area"></div>
       <div class="log sf-log"></div>
     ` : `
-      <div class="rule-box" style="background:#FFF3E0;border-left:3px solid #ED6C02;">
-        <strong>Bitte zuerst Set und unterstützte Rarity links auswählen.</strong>
+      <div style="padding:12px 14px;">
+        <div style="background:#FFF3E0;border-left:3px solid #ED6C02;padding:8px 10px;border-radius:4px;font-size:12px;">
+          <strong>Bitte zuerst Set und unterstützte Rarity links auswählen.</strong>
+        </div>
       </div>
     `}
   `;
