@@ -7,8 +7,8 @@ window.CMCore = (function () {
 
   const USERNAME = 'DaerhardMerhard';
 
-  const THROTTLE_MIN_MS = 800;
-  const THROTTLE_MAX_MS = 1500;
+  const THROTTLE_MIN_MS = 400;
+  const THROTTLE_MAX_MS = 800;
 
   const RULES = {
     'Common':         { deduction: 0.01, minimum: 0.10 },
@@ -180,7 +180,11 @@ window.CMCore = (function () {
         const comment = (commentEl?.value ?? commentEl?.textContent ?? '').trim();
 
         const rarityEl = row.querySelector('svg[aria-label], [aria-label*="Rare"], [aria-label*="Common"]');
-        const rarity = rarityEl?.getAttribute('aria-label')?.trim() ?? '';
+        let rarity = rarityEl?.getAttribute('aria-label')?.trim() ?? '';
+        if (!rarity) {
+          const m = nameLink.textContent.match(/\(V\.\d+\s*-\s*([^)]+)\)/);
+          if (m) rarity = m[1].trim();
+        }
 
         seenIds.add(articleId);
         listings.push({
