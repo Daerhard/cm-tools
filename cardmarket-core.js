@@ -7,8 +7,8 @@ window.CMCore = (function () {
 
   const USERNAME = 'DaerhardMerhard';
 
-  const THROTTLE_MIN_MS = 350;
-  const THROTTLE_MAX_MS = 850;
+  const THROTTLE_MIN_MS = 200;
+  const THROTTLE_MAX_MS = 450;
 
   const RULES = {
     'Common':         { deduction: 0.01, minimum: 0.10 },
@@ -178,6 +178,12 @@ window.CMCore = (function () {
         );
         const comment = (commentEl?.value ?? commentEl?.textContent ?? '').trim();
 
+        const rarityEl = row.querySelector(
+          '[class*="rarity"], .rarity, .product-rarity, ' +
+          '[class*="Rarity"], .badge-rarity'
+        );
+        const rarity = rarityEl?.textContent?.trim() ?? '';
+
         seenIds.add(articleId);
         listings.push({
           articleId,
@@ -186,6 +192,7 @@ window.CMCore = (function () {
           currentPrice,
           amount,
           comment,
+          rarity,
         });
         added++;
       });
@@ -273,6 +280,7 @@ window.CMCore = (function () {
 
   const rule          = rarityName ? RULES[rarityName] : null;
   const ready         = !!(idExpansion && idRarity && rule);
+  const repricerReady = true;
   const rarityDisplay = rarityName || (idRarity ? `Rarity ${idRarity}` : '–');
 
   // ============================================================
@@ -425,7 +433,7 @@ window.CMCore = (function () {
     parseGermanFloat, fmtEur, round2, throttle,
     assertNotChallenge, escapeHtml, languageLabel, downloadCsv, writeLog, todayIso,
     scrapeMyListings, fetchCheapestCommercial,
-    pageUrl, idExpansion, idRarity, setName, setSlug, rarityName, rule, ready, rarityDisplay,
+    pageUrl, idExpansion, idRarity, setName, setSlug, rarityName, rule, ready, repricerReady, rarityDisplay,
     panel,
   };
 })();

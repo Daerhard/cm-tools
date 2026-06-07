@@ -7,10 +7,11 @@
   }
 
   const {
-    USERNAME, fmtEur, round2, throttle,
-    escapeHtml, downloadCsv, writeLog, todayIso,
+    USERNAME, RULES,
+    fmtEur, round2, throttle,
+    escapeHtml, writeLog, todayIso,
     scrapeMyListings, fetchCheapestCommercial,
-    pageUrl, rule, ready, rarityDisplay, setName, panel,
+    pageUrl, repricerReady, rarityDisplay, setName, panel,
   } = window.CMCore;
 
   // ============================================================
@@ -87,6 +88,20 @@
     }
   }
 
+  // Runs up to `concurrency` fetches in parallel
+  async function fetchPool(items, fn, concurrency) {
+    const results = new Array(items.length).fill(null);
+    let next = 0;
+    async function worker() {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i], i);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+    return results;
+  }
+
   // ============================================================
   // TAB AUFBAUEN
   // ============================================================
@@ -100,16 +115,13 @@
       <div><span class="key">Account:</span> <strong>${escapeHtml(USERNAME)}</strong>
         <span style="color:#888">(wird ausgefiltert)</span></div>
     </div>
-    ${ready ? `
+    ${repricerReady ? `
       <div class="rule-box">
-        <strong>Regel:</strong> ${fmtEur(rule.deduction)} € unter günstigstem gewerblichen Anbieter
-        ${rule.minimum !== null
-          ? `, Mindestpreis <strong>${fmtEur(rule.minimum)} €</strong>`
-          : ', kein Mindestpreis'}.
+        Verarbeitet alle sichtbaren Listings. Preis wird pro Karte anhand der Rarität berechnet.<br>
+        Unterstützte Rarities: Common, Super Rare, Ultra Rare, Secret Rare, Starlight Rare.
       </div>
       <button class="action rep-preview-btn">Vorschau starten</button>
-      <button class="action apply  rep-apply-btn"   disabled>Preise anwenden</button>
-      <button class="action export rep-export-btn"  disabled>Vorschau als CSV</button>
+      <button class="action apply rep-apply-btn" disabled>Preise anwenden</button>
       <button class="action rep-include-btn" style="display:none;background:#6D4C41;">
         Ausgeblendete einbeziehen
       </button>
@@ -117,15 +129,14 @@
       <div class="log rep-log"></div>
     ` : `
       <div class="rule-box" style="background:#FFF3E0;border-left:3px solid #ED6C02;">
-        <strong>Bitte zuerst Set und unterstützte Rarity links auswählen.</strong><br><br>
-        Unterstützte Rarities: Common, Super Rare, Ultra Rare, Secret Rare, Starlight Rare.
+        <strong>Keine Listings gefunden.</strong>
       </div>
     `}
   `;
 
-  if (!ready) return;
+  if (!repricerReady) return;
 
-  const $       = sel => tab.querySelector(sel);
+  const $        = sel => tab.querySelector(sel);
   const repArea  = $('.rep-preview-area');
   const repLogEl = $('.rep-log');
   const repLog   = (msg, isErr = false) => writeLog(repLogEl, msg, isErr, 'Repricer');
@@ -171,19 +182,35 @@
         }
       }
 
+      // 3. Skip listings with unsupported rarity
+      const skippedRarity = [];
+      for (const l of myListings) {
+        if (!l.greyedType && l.rarity && !RULES[l.rarity]) {
+          l.greyedType = 'unsupported-rarity';
+          skippedRarity.push(l.rarity);
+        }
+      }
+      if (skippedRarity.length) {
+        const unique = [...new Set(skippedRarity)];
+        repLog(`Übersprungen (nicht unterstützte Rarity): ${unique.join(', ')}`);
+      }
+
       const dupCount = myListings.filter(l => l.greyedType === 'duplicate').length;
       const hrCount  = myListings.filter(l => l.greyedType === 'hr').length;
       if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden ausgegraut.`);
       if (hrCount  > 0) repLog(`${hrCount} Spekulationskarten (HR) werden ausgegraut.`);
 
-      // 3. Fetch competitor once per unique card (cheapest listing of each group)
+      // 4. Fetch competitor once per unique card, 2 in parallel
       const primaryListings = [...byCard.values()].map(g => g[0]);
-      const compMap = new Map();
+      const total = primaryListings.length;
 
-      for (let i = 0; i < primaryListings.length; i++) {
-        const primary = primaryListings[i];
-        repLog(`(${i + 1}/${primaryListings.length}) ${primary.cardName} …`);
-        if (i > 0) await throttle();
+      const compMap = new Map();
+      let done = 0;
+
+      await fetchPool(primaryListings, async (primary) => {
+        if (done > 0) await throttle();
+        done++;
+        repLog(`(${done}/${total}) ${primary.cardName} …`);
 
         let comp = null;
         let fetchError = null;
@@ -206,24 +233,31 @@
 
         const key = primary.cardUrl.split('?')[0];
         compMap.set(key, fetchError ? { error: fetchError } : { comp });
-      }
+      }, 2);
 
-      // 4. Build repData for ALL listings (including greyed)
+      // 5. Build repData for ALL listings with per-card rule
       repData = myListings.map(listing => {
         const key   = listing.cardUrl.split('?')[0];
         const entry = compMap.get(key) ?? { comp: null };
+        const r     = RULES[listing.rarity] ?? null;
 
-        if (entry.error) {
-          return {
-            ...listing,
-            competitorPrice: null, competitorSeller: null,
-            newPrice: listing.currentPrice,
-            action: 'skip-error', errorMsg: entry.error,
-            selected: false,
-          };
+        if (listing.greyedType === 'unsupported-rarity') {
+          return { ...listing, competitorPrice: null, competitorSeller: null,
+                   newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
         }
 
-        const dec = computeNewPrice(listing, entry.comp, rule);
+        if (entry.error) {
+          return { ...listing, competitorPrice: null, competitorSeller: null,
+                   newPrice: listing.currentPrice, action: 'skip-error',
+                   errorMsg: entry.error, selected: false };
+        }
+
+        if (!r) {
+          return { ...listing, competitorPrice: null, competitorSeller: null,
+                   newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
+        }
+
+        const dec = computeNewPrice(listing, entry.comp, r);
         return {
           ...listing,
           competitorPrice:  entry.comp?.price  ?? null,
@@ -238,8 +272,7 @@
 
       const hasGreyed = repData.some(r => r.greyedType);
       $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
-      $('.rep-apply-btn').disabled  = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
-      $('.rep-export-btn').disabled = false;
+      $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
 
       const errCount = repData.filter(r => r.action === 'skip-error').length;
       repLog(`Vorschau abgeschlossen.${errCount ? ` ${errCount} Karten mit Fehler (rot).` : ''}`);
@@ -266,7 +299,7 @@
 
     repArea.querySelectorAll('.row-cb[data-greyed]').forEach(cb => {
       cb.disabled = !greyedIncluded;
-      cb.checked  = greyedIncluded && !cb.dataset.skip;
+      cb.checked  = greyedIncluded;
     });
 
     $('.rep-include-btn').textContent = greyedIncluded
@@ -306,41 +339,13 @@
   };
 
   // ============================================================
-  // CSV EXPORT
-  // ============================================================
-
-  $('.rep-export-btn').onclick = () => {
-    downloadCsv(
-      [
-        ['Karte', 'Rarity', 'Menge', 'Kommentar', 'Typ', 'Alt (€)', 'Konkurrent (€)', 'Konkurrent Verkäufer', 'Neu (€)', 'Aktion'],
-        ...repData.map(r => [
-          r.cardName, rarityDisplay, r.amount,
-          r.comment ?? '',
-          r.greyedType ?? 'normal',
-          r.currentPrice.toFixed(2),
-          r.competitorPrice != null ? r.competitorPrice.toFixed(2) : '',
-          r.competitorSeller ?? '',
-          r.action.startsWith('skip') ? '' : r.newPrice.toFixed(2),
-          r.action,
-        ]),
-      ],
-      `repricer-${setName.replace(/\s+/g, '_')}-${rarityDisplay.replace(/\s+/g, '_')}-${todayIso()}.csv`
-    );
-  };
-
-  // ============================================================
   // HELPERS
   // ============================================================
 
   function repSetBusy(busy) {
-    $('.rep-preview-btn').disabled = busy;
-    if (busy) {
-      $('.rep-apply-btn').disabled  = true;
-      $('.rep-export-btn').disabled = true;
-      $('.rep-include-btn').disabled = true;
-    } else {
-      $('.rep-include-btn').disabled = false;
-    }
+    $('.rep-preview-btn').disabled   = busy;
+    $('.rep-apply-btn').disabled     = busy || true;
+    $('.rep-include-btn').disabled   = busy;
   }
 
   function refreshRepSummary(data) {
@@ -381,9 +386,10 @@
       const isSkip = r.action.startsWith('skip');
 
       const newDisp = isSkip
-        ? ({ 'skip-no-competitor': '– kein gewerbl.',
-             'skip-no-change':     '– keine Änderung',
-             'skip-error':         '– Fehler',
+        ? ({ 'skip-no-competitor':  '– kein gewerbl.',
+             'skip-no-change':      '– keine Änderung',
+             'skip-no-rule':        '– Rarity n/a',
+             'skip-error':          '– Fehler',
            }[r.action] ?? '– keine Änderung')
         : fmtEur(r.newPrice) + ' €';
 
@@ -391,13 +397,8 @@
       const dStr     = isSkip ? ''
         : ((r.newPrice - r.currentPrice >= 0) ? '+' : '') + fmtEur(r.newPrice - r.currentPrice);
 
-      // Checkbox state:
-      // - isSkip (no greyedType) → always disabled
-      // - greyedType            → disabled until "include", marked data-greyed
-      // - normal reprice/floor  → enabled
-      const isGreyed        = !!r.greyedType;
+      const isGreyed          = !!r.greyedType;
       const isGreyedToggleable = isGreyed && !isSkip;
-      const cbDisabled      = isSkip || isGreyed;
 
       const greyedLabel = r.greyedType === 'hr'        ? ' [HR]'
                         : r.greyedType === 'duplicate' ? ' [Duplikat]'
@@ -407,11 +408,11 @@
         <td class="cb">
           <input type="checkbox" class="row-cb" data-idx="${i}"
             ${r.selected ? 'checked' : ''}
-            ${cbDisabled ? 'disabled' : ''}
-            ${isGreyedToggleable ? 'data-greyed="1"' : ''}
-            ${isGreyedToggleable && isSkip ? 'data-skip="1"' : ''}>
+            ${(isSkip || isGreyed) ? 'disabled' : ''}
+            ${isGreyedToggleable ? 'data-greyed="1"' : ''}>
         </td>
         <td>${escapeHtml(r.cardName)}<span style="color:#aaa;font-size:10px;">${greyedLabel}</span></td>
+        <td class="num" style="font-size:10px;color:#888;">${escapeHtml(r.rarity || '–')}</td>
         <td class="num">${r.amount || 1}</td>
         <td class="num">${fmtEur(r.currentPrice)}</td>
         <td class="num">${compDisp}</td>
@@ -425,7 +426,7 @@
       <table>
         <thead><tr>
           <th class="cb"><input type="checkbox" class="master-cb"></th>
-          <th>Karte</th><th>Mng</th><th>Alt</th><th>Konk.</th><th>Neu</th><th>Δ</th>
+          <th>Karte</th><th>Rar.</th><th>Mng</th><th>Alt</th><th>Konk.</th><th>Neu</th><th>Δ</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
@@ -448,6 +449,7 @@
         cb.checked = master.checked;
         data[+cb.dataset.idx].selected = master.checked;
       });
+      $('.rep-apply-btn').disabled = !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
       refreshRepSummary(data);
     });
 
