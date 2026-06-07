@@ -20,25 +20,21 @@
 
   function computeNewPrice(listing, comp, r) {
     if (!comp) return { price: listing.currentPrice, action: 'skip-no-competitor' };
-
     const target = round2(comp.price - r.deduction);
-
     if (r.minimum !== null && target < r.minimum) {
       const floored = round2(r.minimum);
       if (floored === listing.currentPrice) return { price: floored, action: 'skip-no-change' };
       return { price: floored, action: 'floor' };
     }
-
     if (target === listing.currentPrice) return { price: target, action: 'skip-no-change' };
     return { price: target, action: 'reprice' };
   }
 
   async function updatePrice(articleId, newPrice) {
-    const modalUrl = `/de/YuGiOh/Modal/Article_EditArticleModal?showUserOffersRow=1&idArticle=${encodeURIComponent(articleId)}`;
-    const modalRes = await fetch(modalUrl, {
-      credentials: 'include',
-      headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    });
+    const modalRes = await fetch(
+      `/de/YuGiOh/Modal/Article_EditArticleModal?showUserOffersRow=1&idArticle=${encodeURIComponent(articleId)}`,
+      { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+    );
     if (!modalRes.ok) throw new Error(`Edit-Modal HTTP ${modalRes.status}`);
 
     const modalHtml = await modalRes.text();
@@ -46,7 +42,6 @@
 
     const modalDoc = new DOMParser().parseFromString(modalHtml, 'text/html');
     const params   = new URLSearchParams();
-
     modalDoc.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
       const name = el.getAttribute('name');
       if (!name) return;
@@ -57,19 +52,16 @@
       }
       params.set(name, el.value ?? '');
     });
-
     if (!params.has('idArticle')) throw new Error('idArticle nicht im Modal');
     if (!params.has('__cmtkn'))  throw new Error('CSRF-Token (__cmtkn) nicht gefunden');
-
     params.set('price', fmtEur(newPrice));
 
     const res = await fetch('/de/YuGiOh/AjaxAction/Article_EditSingleArticle', {
-      method: 'POST',
-      credentials: 'include',
+      method: 'POST', credentials: 'include',
       headers: {
-        'Content-Type':      'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With':  'XMLHttpRequest',
-        'Accept':            'application/json, text/html, */*',
+        'Content-Type':     'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept':           'application/json, text/html, */*',
       },
       body: params.toString(),
     });
@@ -82,9 +74,8 @@
     if (ct.includes('application/json')) {
       let json = null;
       try { json = JSON.parse(text); } catch { /* ignore */ }
-      if (json && json.success === false) {
+      if (json && json.success === false)
         throw new Error(`Cardmarket meldete Fehler: ${json.message || text.slice(0, 200)}`);
-      }
     }
   }
 
@@ -92,10 +83,7 @@
     const results = new Array(items.length).fill(null);
     let next = 0;
     async function worker() {
-      while (next < items.length) {
-        const i = next++;
-        results[i] = await fn(items[i], i);
-      }
+      while (next < items.length) { const i = next++; results[i] = await fn(items[i], i); }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
     return results;
@@ -115,11 +103,11 @@
     </div>
     ${repricerReady ? `
       <div class="tool-toolbar">
-        <button class="action rep-preview-btn">&#9654; Vorschau</button>
+        <button class="action rep-load-btn">&#9654; Karten laden</button>
         <button class="action rep-include-btn" style="display:none;background:#6D4C41;">Einbeziehen</button>
         <button class="action apply rep-apply-btn" disabled>&#10003; Anwenden</button>
-        <button class="action rep-next-btn" style="display:none;background:#1565C0;">&#8594; Weiter</button>
       </div>
+      <div class="batch-selector rep-batch-selector" style="display:none;"></div>
       <div class="preview rep-preview-area"></div>
       <div class="log rep-log"></div>
     ` : `
@@ -133,41 +121,45 @@
 
   if (!repricerReady) return;
 
-  const $        = sel => tab.querySelector(sel);
-  const repArea  = $('.rep-preview-area');
-  const repLogEl = $('.rep-log');
-  const repLog   = (msg, isErr = false) => writeLog(repLogEl, msg, isErr, 'Repricer');
+  const $            = sel => tab.querySelector(sel);
+  const repArea      = $('.rep-preview-area');
+  const repLogEl     = $('.rep-log');
+  const batchSel     = $('.rep-batch-selector');
+  const repLog       = (msg, isErr = false) => writeLog(repLogEl, msg, isErr, 'Repricer');
 
-  const BATCH_SIZE = 50;
+  const BATCH_SIZE   = 50;
 
   let repData        = [];
   let greyedIncluded = false;
   let allMyListings  = [];
   let primaryListings = [];
-  let batchIndex     = 0;
+  let activeBatchIdx = -1;
+  const doneBatches  = new Set();
 
   // ============================================================
-  // VORSCHAU
+  // PHASE 1 — KARTEN LADEN
   // ============================================================
 
-  $('.rep-preview-btn').onclick = async () => {
-    repLog('Vorschau wird erstellt …');
+  $('.rep-load-btn').onclick = async () => {
+    repLog('Lade eigene Listings …');
     repSetBusy(true);
     greyedIncluded = false;
-    batchIndex = 0;
-    repArea.classList.remove('greyed-included');
+    activeBatchIdx = -1;
+    repData = [];
+    repArea.innerHTML = '';
+    batchSel.style.display = 'none';
     $('.rep-include-btn').style.display = 'none';
-    $('.rep-next-btn').style.display    = 'none';
+    doneBatches.clear();
 
     try {
       allMyListings = await scrapeMyListings(pageUrl, repLog);
       repLog(`${allMyListings.length} eigene Listings gefunden.`);
       if (!allMyListings.length) {
-        repLog('Nichts zu tun. Stelle sicher, dass Listings geladen sind.', true);
+        repLog('Nichts gefunden. Stelle sicher, dass Listings geladen sind.', true);
         return;
       }
 
-      // Group by card URL, mark non-cheapest as duplicate
+      // Group by card URL, mark duplicates
       const byCard = new Map();
       for (const l of allMyListings) {
         const key = l.cardUrl.split('?')[0];
@@ -179,11 +171,9 @@
         for (let i = 1; i < group.length; i++) group[i].greyedType = 'duplicate';
       }
 
-      // Mark HR speculation cards
+      // Mark HR
       for (const l of allMyListings) {
-        if (!l.greyedType && l.comment.trim().toUpperCase() === 'HR') {
-          l.greyedType = 'hr';
-        }
+        if (!l.greyedType && l.comment.trim().toUpperCase() === 'HR') l.greyedType = 'hr';
       }
 
       // Mark unsupported rarity
@@ -194,20 +184,18 @@
           skippedRarity.push(l.rarity);
         }
       }
-      if (skippedRarity.length) {
+      if (skippedRarity.length)
         repLog(`Übersprungen (nicht unterstützte Rarity): ${[...new Set(skippedRarity)].join(', ')}`);
-      }
 
       const dupCount = allMyListings.filter(l => l.greyedType === 'duplicate').length;
       const hrCount  = allMyListings.filter(l => l.greyedType === 'hr').length;
-      if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden ausgegraut.`);
-      if (hrCount  > 0) repLog(`${hrCount} Spekulationskarten (HR) werden ausgegraut.`);
+      if (dupCount > 0) repLog(`${dupCount} Duplikate ausgegraut.`);
+      if (hrCount  > 0) repLog(`${hrCount} HR-Karten ausgegraut.`);
 
       primaryListings = [...byCard.values()].map(g => g[0]);
-      const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
-      repLog(`${primaryListings.length} einzigartige Karten — ${batchTotal} Batch(es) à ${BATCH_SIZE}.`);
+      renderBatchSelector();
+      repLog(`${primaryListings.length} einzigartige Karten — Batch wählen.`);
 
-      await runBatch(0);
     } catch (err) {
       repLog('FEHLER: ' + err.message, true);
       console.error('[Repricer]', err);
@@ -217,96 +205,145 @@
   };
 
   // ============================================================
-  // BATCH LADEN
+  // BATCH SELECTOR
   // ============================================================
 
-  async function runBatch(bIdx) {
+  function renderBatchSelector() {
     const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
+    batchSel.innerHTML = '';
+
+    for (let i = 0; i < batchTotal; i++) {
+      const from = i * BATCH_SIZE + 1;
+      const to   = Math.min((i + 1) * BATCH_SIZE, primaryListings.length);
+      const pill = document.createElement('button');
+      pill.className  = 'batch-pill' + (doneBatches.has(i) ? ' done' : '');
+      pill.textContent = `${from}–${to}`;
+      pill.dataset.batch = i;
+      pill.onclick = () => loadBatch(i);
+      batchSel.appendChild(pill);
+    }
+
+    batchSel.style.display = 'flex';
+  }
+
+  function updateBatchPills() {
+    batchSel.querySelectorAll('.batch-pill').forEach(pill => {
+      const i = +pill.dataset.batch;
+      pill.className = 'batch-pill'
+        + (doneBatches.has(i) ? ' done' : '')
+        + (i === activeBatchIdx ? ' active' : '');
+    });
+  }
+
+  // ============================================================
+  // PHASE 2 — BATCH LADEN & REPRICING
+  // ============================================================
+
+  async function loadBatch(bIdx) {
+    if (activeBatchIdx === bIdx) return; // already loaded
+
+    activeBatchIdx = bIdx;
+    greyedIncluded = false;
+    repData = [];
+    repArea.innerHTML = '';
+    repArea.classList.remove('greyed-included');
+    $('.rep-include-btn').style.display = 'none';
+    $('.rep-apply-btn').disabled = true;
+    updateBatchPills();
+
     const batch      = primaryListings.slice(bIdx * BATCH_SIZE, (bIdx + 1) * BATCH_SIZE);
+    const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
     const offset     = bIdx * BATCH_SIZE;
 
-    repLog(`Batch ${bIdx + 1}/${batchTotal} — lade ${batch.length} Karten …`);
+    repLog(`Batch ${bIdx + 1}/${batchTotal} (${batch.length} Karten) — lade Konkurrenzpreise …`);
+    repSetBusy(true);
 
-    const compMap = new Map();
-    let done = 0;
+    try {
+      const compMap = new Map();
+      let done = 0;
 
-    await fetchPool(batch, async (primary) => {
-      if (done > 0) await throttle();
-      done++;
-      repLog(`(${offset + done}/${primaryListings.length}) ${primary.cardName} …`);
+      await fetchPool(batch, async (primary) => {
+        if (done > 0) await throttle();
+        done++;
+        repLog(`(${offset + done}/${primaryListings.length}) ${primary.cardName} …`);
 
-      let comp = null;
-      let fetchError = null;
-      try {
-        comp = await fetchCheapestCommercial(primary);
-      } catch (err) {
-        fetchError = err.message;
-        repLog(`  Fehler: ${err.message}`, true);
-        if (/Cloudflare-Challenge/i.test(err.message)) throw err;
-        if (/HTTP 429/.test(err.message)) {
-          repLog('  Rate-Limit — warte 45 Sekunden …');
-          await window.CMCore.sleep(45000);
-        } else {
-          await throttle();
-        }
+        let comp = null;
+        let fetchError = null;
         try {
           comp = await fetchCheapestCommercial(primary);
-          fetchError = null;
-          repLog('  Retry erfolgreich.');
-        } catch (err2) {
-          repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
-          if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
-          if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Batch abgebrochen. Bitte einige Minuten warten.');
-        }
-      }
-
-      const key = primary.cardUrl.split('?')[0];
-      compMap.set(key, fetchError ? { error: fetchError } : { comp });
-    }, 1);
-
-    // Build repData for this batch's listings only
-    const batchKeys = new Set(batch.map(p => p.cardUrl.split('?')[0]));
-
-    repData = allMyListings
-      .filter(l => batchKeys.has(l.cardUrl.split('?')[0]))
-      .map(listing => {
-        const key   = listing.cardUrl.split('?')[0];
-        const entry = compMap.get(key) ?? { comp: null };
-        const r     = RULES[listing.rarity] ?? null;
-
-        if (listing.greyedType === 'unsupported-rarity') {
-          return { ...listing, competitorPrice: null, competitorSeller: null,
-                   newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
-        }
-        if (entry.error) {
-          return { ...listing, competitorPrice: null, competitorSeller: null,
-                   newPrice: listing.currentPrice, action: 'skip-error',
-                   errorMsg: entry.error, selected: false };
-        }
-        if (!r) {
-          return { ...listing, competitorPrice: null, competitorSeller: null,
-                   newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
+        } catch (err) {
+          fetchError = err.message;
+          repLog(`  Fehler: ${err.message}`, true);
+          if (/Cloudflare-Challenge/i.test(err.message)) throw err;
+          if (/HTTP 429/.test(err.message)) {
+            repLog('  Rate-Limit — warte 45 Sekunden …');
+            await window.CMCore.sleep(45000);
+          } else {
+            await throttle();
+          }
+          try {
+            comp = await fetchCheapestCommercial(primary);
+            fetchError = null;
+            repLog('  Retry erfolgreich.');
+          } catch (err2) {
+            repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
+            if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
+            if (/HTTP 429/.test(err2.message))
+              throw new Error('Rate-Limit nach Wartezeit — bitte einige Minuten warten.');
+          }
         }
 
-        const dec = computeNewPrice(listing, entry.comp, r);
-        return {
-          ...listing,
-          competitorPrice:  entry.comp?.price  ?? null,
-          competitorSeller: entry.comp?.seller ?? null,
-          newPrice:  dec.price,
-          action:    dec.action,
-          selected: !listing.greyedType,
-        };
-      });
+        const key = primary.cardUrl.split('?')[0];
+        compMap.set(key, fetchError ? { error: fetchError } : { comp });
+      }, 1);
 
-    renderRepPreview(repData);
+      const batchKeys = new Set(batch.map(p => p.cardUrl.split('?')[0]));
 
-    const hasGreyed = repData.some(r => r.greyedType);
-    $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
-    $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+      repData = allMyListings
+        .filter(l => batchKeys.has(l.cardUrl.split('?')[0]))
+        .map(listing => {
+          const key   = listing.cardUrl.split('?')[0];
+          const entry = compMap.get(key) ?? { comp: null };
+          const r     = RULES[listing.rarity] ?? null;
 
-    const errCount = repData.filter(r => r.action === 'skip-error').length;
-    repLog(`Batch ${bIdx + 1}/${batchTotal} bereit.${errCount ? ` ${errCount} Fehler.` : ''}`);
+          if (listing.greyedType === 'unsupported-rarity')
+            return { ...listing, competitorPrice: null, competitorSeller: null,
+                     newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
+          if (entry.error)
+            return { ...listing, competitorPrice: null, competitorSeller: null,
+                     newPrice: listing.currentPrice, action: 'skip-error',
+                     errorMsg: entry.error, selected: false };
+          if (!r)
+            return { ...listing, competitorPrice: null, competitorSeller: null,
+                     newPrice: listing.currentPrice, action: 'skip-no-rule', selected: false };
+
+          const dec = computeNewPrice(listing, entry.comp, r);
+          return {
+            ...listing,
+            competitorPrice:  entry.comp?.price  ?? null,
+            competitorSeller: entry.comp?.seller ?? null,
+            newPrice:  dec.price,
+            action:    dec.action,
+            selected: !listing.greyedType,
+          };
+        });
+
+      renderRepPreview(repData);
+
+      const hasGreyed = repData.some(r => r.greyedType);
+      $('.rep-include-btn').style.display = hasGreyed ? 'block' : 'none';
+      $('.rep-apply-btn').disabled =
+        !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+
+      const errCount = repData.filter(r => r.action === 'skip-error').length;
+      repLog(`Batch ${bIdx + 1}/${batchTotal} bereit.${errCount ? ` ${errCount} Fehler.` : ''}`);
+
+    } catch (err) {
+      repLog('FEHLER: ' + err.message, true);
+      console.error('[Repricer]', err);
+    } finally {
+      repSetBusy(false);
+    }
   }
 
   // ============================================================
@@ -316,19 +353,17 @@
   $('.rep-include-btn').onclick = () => {
     greyedIncluded = !greyedIncluded;
     repArea.classList.toggle('greyed-included', greyedIncluded);
-
     repData.forEach(r => {
       if (!r.greyedType) return;
       r.selected = greyedIncluded && !r.action.startsWith('skip');
     });
-
     repArea.querySelectorAll('.row-cb[data-greyed]').forEach(cb => {
       cb.disabled = !greyedIncluded;
       cb.checked  = greyedIncluded;
     });
-
     $('.rep-include-btn').textContent = greyedIncluded ? 'Ausblenden' : 'Einbeziehen';
-    $('.rep-apply-btn').disabled = !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+    $('.rep-apply-btn').disabled =
+      !repData.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
     refreshRepSummary(repData);
   };
 
@@ -357,35 +392,10 @@
       }
     }
     repLog(`Fertig: ${ok} angepasst, ${fail} Fehler.`);
+    doneBatches.add(activeBatchIdx);
+    activeBatchIdx = -1;
+    updateBatchPills();
     repSetBusy(false);
-
-    const batchTotal = Math.ceil(primaryListings.length / BATCH_SIZE);
-    if (batchIndex + 1 < batchTotal) {
-      const nextNum = batchIndex + 2;
-      $('.rep-next-btn').textContent = `→ Batch ${nextNum}/${batchTotal} laden`;
-      $('.rep-next-btn').style.display = 'block';
-    }
-  };
-
-  // ============================================================
-  // NÄCHSTER BATCH
-  // ============================================================
-
-  $('.rep-next-btn').onclick = async () => {
-    batchIndex++;
-    greyedIncluded = false;
-    repArea.classList.remove('greyed-included');
-    $('.rep-include-btn').style.display = 'none';
-    $('.rep-next-btn').style.display    = 'none';
-    repSetBusy(true);
-    try {
-      await runBatch(batchIndex);
-    } catch (err) {
-      repLog('FEHLER: ' + err.message, true);
-      console.error('[Repricer]', err);
-    } finally {
-      repSetBusy(false);
-    }
   };
 
   // ============================================================
@@ -393,16 +403,15 @@
   // ============================================================
 
   function repSetBusy(busy) {
-    $('.rep-preview-btn').disabled  = busy;
-    $('.rep-next-btn').disabled     = busy;
-    $('.rep-include-btn').disabled  = busy;
+    $('.rep-load-btn').disabled    = busy;
+    $('.rep-include-btn').disabled = busy;
     if (busy) $('.rep-apply-btn').disabled = true;
+    batchSel.querySelectorAll('.batch-pill').forEach(p => p.disabled = busy);
   }
 
   function refreshRepSummary(data) {
     const box = repArea.querySelector('#rep-summary');
     if (!box) return;
-
     const sel      = data.filter(r => r.selected);
     const total    = sel.length;
     const items    = sel.reduce((s, r) => s + (r.amount || 1), 0);
@@ -411,7 +420,6 @@
     const delta    = round2(newTotal - curTotal);
     const deltaStr = (delta >= 0 ? '+' : '') + fmtEur(delta);
     const deltaCls = delta >= 0 ? 'delta-pos' : 'delta-neg';
-
     box.innerHTML = `
       <div class="summary-row"><span>Ausgewählte Listings / Artikel</span><strong>${total} / ${items}</strong></div>
       <hr>
@@ -433,28 +441,22 @@
                 : r.action === 'reprice'    ? (r.newPrice > r.currentPrice ? 'change-up' : 'change-down')
                 : r.action === 'skip-error' ? 'change-error'
                 : 'change-skip';
-
       const isSkip = r.action.startsWith('skip');
-
       const newDisp = isSkip
-        ? ({ 'skip-no-competitor':  '– kein gewerbl.',
-             'skip-no-change':      '– keine Änderung',
-             'skip-no-rule':        '– Rarity n/a',
-             'skip-error':          '– Fehler',
+        ? ({ 'skip-no-competitor': '– kein gewerbl.',
+             'skip-no-change':     '– keine Änderung',
+             'skip-no-rule':       '– Rarity n/a',
+             'skip-error':         '– Fehler',
            }[r.action] ?? '– keine Änderung')
         : fmtEur(r.newPrice) + ' €';
-
       const compDisp = r.competitorPrice != null ? fmtEur(r.competitorPrice) + ' €' : '–';
-      const dStr     = isSkip ? ''
+      const dStr = isSkip ? ''
         : ((r.newPrice - r.currentPrice >= 0) ? '+' : '') + fmtEur(r.newPrice - r.currentPrice);
-
       const isGreyed           = !!r.greyedType;
       const isGreyedToggleable = isGreyed && !isSkip;
-
       const greyedLabel = r.greyedType === 'hr'        ? ' [HR]'
                         : r.greyedType === 'duplicate' ? ' [Duplikat]'
                         : '';
-
       return `<tr class="${cls}${isGreyed ? ' row-greyed' : ''}">
         <td class="cb">
           <input type="checkbox" class="row-cb" data-idx="${i}"
@@ -488,31 +490,29 @@
 
   function wireRepCheckboxes(container, data) {
     const master = container.querySelector('.master-cb');
-
     const updateMaster = () => {
       const enabled = [...container.querySelectorAll('.row-cb:not(:disabled)')];
       master.checked       = enabled.length > 0 && enabled.every(c => c.checked);
       master.indeterminate = !master.checked && enabled.some(c => c.checked);
     };
-
     master.addEventListener('change', () => {
       container.querySelectorAll('.row-cb:not(:disabled)').forEach(cb => {
         cb.checked = master.checked;
         data[+cb.dataset.idx].selected = master.checked;
       });
-      $('.rep-apply-btn').disabled = !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+      $('.rep-apply-btn').disabled =
+        !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
       refreshRepSummary(data);
     });
-
     container.querySelectorAll('.row-cb').forEach(cb => {
       cb.addEventListener('change', () => {
         data[+cb.dataset.idx].selected = cb.checked;
         updateMaster();
-        $('.rep-apply-btn').disabled = !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
+        $('.rep-apply-btn').disabled =
+          !data.some(r => r.selected && (r.action === 'reprice' || r.action === 'floor'));
         refreshRepSummary(data);
       });
     });
-
     updateMaster();
   }
 

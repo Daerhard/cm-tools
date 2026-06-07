@@ -393,6 +393,19 @@ window.CMCore = (function () {
         border: 1px solid #1F3864; background: #fff;
         color: #1F3864; border-radius: 3px; cursor: pointer;
       }
+      #cmtools-panel .batch-selector {
+        display: flex; flex-wrap: wrap; gap: 6px;
+        padding: 8px 14px; border-bottom: 1px solid #eee; flex-shrink: 0;
+      }
+      #cmtools-panel .batch-pill {
+        padding: 4px 12px; border: 1px solid #1F3864; border-radius: 12px;
+        cursor: pointer; font-size: 11px; font-weight: bold;
+        color: #1F3864; background: #fff;
+      }
+      #cmtools-panel .batch-pill:hover:not(.active) { background: #EEF2FF; }
+      #cmtools-panel .batch-pill.active { background: #1F3864; color: #fff; }
+      #cmtools-panel .batch-pill.done   { border-color: #2E7D32; color: #2E7D32; }
+      #cmtools-panel .batch-pill.active.done { background: #2E7D32; border-color: #2E7D32; color: #fff; }
       #cmtools-panel .log {
         flex-shrink: 0; padding: 6px 8px; background: #FAFAFA;
         font-family: ui-monospace, monospace; font-size: 11px;
