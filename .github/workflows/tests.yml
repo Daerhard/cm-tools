@@ -13,5 +13,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax check
         run: |
-          node --check cardmarket-logic.js
-          node --check cardmarket-ui.js
+          node --check cardmarket-core.js
+          node --check cardmarket-repricer.js
+          node --check cardmarket-stockfiller.js
