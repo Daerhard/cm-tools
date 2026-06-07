@@ -25,7 +25,8 @@
   const idExpansion = urlObj.searchParams.get('idExpansion');
   const idRarity    = urlObj.searchParams.get('idRarity');
 
-  console.log(`[CMTools] v2 geladen. idExpansion=${idExpansion ?? '(none)'} idRarity=${idRarity ?? '(none)'}`);
+  const version = (typeof GM_info !== 'undefined' ? GM_info.script.version : '?');
+  console.log(`[CMTools] v${version} geladen. idExpansion=${idExpansion ?? '(none)'} idRarity=${idRarity ?? '(none)'}`);
 
   let setName = idExpansion ? `Set ${idExpansion}` : '–';
   const expansionFilter = document.querySelector('select[name="idExpansion"]');
