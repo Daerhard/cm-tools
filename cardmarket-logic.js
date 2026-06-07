@@ -193,7 +193,7 @@ window.CMTools = (function () {
 
       rows.forEach(row => {
         const articleId =
-          row.id.match(/articleRow(\d+)/)?.[1] ||
+          row.id.match(/(?:articleRow|stockRow)(\d+)/)?.[1] ||
           row.dataset.articleId ||
           row.getAttribute('data-article-id') ||
           row.querySelector('[data-article-id]')?.dataset.articleId;
