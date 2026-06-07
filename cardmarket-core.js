@@ -172,6 +172,12 @@ window.CMCore = (function () {
         const rawAmt = amountInput ? parseInt(amountInput.value, 10) : NaN;
         const amount = Number.isFinite(rawAmt) && rawAmt >= 1 ? rawAmt : 1;
 
+        const commentEl = row.querySelector(
+          'textarea[name="comments"], input[name="comments"], ' +
+          '.article-comment, [class*="comment"] .value'
+        );
+        const comment = (commentEl?.value ?? commentEl?.textContent ?? '').trim();
+
         seenIds.add(articleId);
         listings.push({
           articleId,
@@ -179,6 +185,7 @@ window.CMCore = (function () {
           cardUrl:      new URL(nameLink.getAttribute('href'), location.origin).toString(),
           currentPrice,
           amount,
+          comment,
         });
         added++;
       });
@@ -382,6 +389,8 @@ window.CMCore = (function () {
       #cmtools-panel .summary hr { border: none; border-top: 1px solid #C5D8F0; margin: 4px 0; }
       #cmtools-panel .delta-pos { color: #2E7D32; }
       #cmtools-panel .delta-neg { color: #1565C0; }
+      #cmtools-panel tr.row-greyed td { color: #bbb; font-style: italic; }
+      #cmtools-panel .greyed-included tr.row-greyed td { color: inherit; font-style: normal; background: #FFFDE7; }
     </style>
     <header>
       <span>Cardmarket Tools</span>
