@@ -474,7 +474,7 @@ window.CMCore = (function () {
   return {
     USERNAME, RULES,
     DEFAULT_AMOUNT, DEFAULT_LANGUAGE, DEFAULT_FIRST_ED, DEFAULT_CONDITION_ID, STARLIGHT_FALLBACK,
-    parseGermanFloat, fmtEur, round2, throttle,
+    parseGermanFloat, fmtEur, round2, sleep, throttle,
     assertNotChallenge, escapeHtml, languageLabel, downloadCsv, writeLog, todayIso,
     scrapeMyListings, fetchCheapestCommercial,
     pageUrl, idExpansion, idRarity, setName, setSlug, rarityName, rule, ready, repricerReady, rarityDisplay,
