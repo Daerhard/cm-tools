@@ -7,6 +7,6 @@
 // @match        https://www.cardmarket.com/*/YuGiOh/Stock/Offers/*
 // @require      https://raw.githubusercontent.com/Daerhard/cm-tools/main/cardmarket-logic.js
 // @require      https://raw.githubusercontent.com/Daerhard/cm-tools/main/cardmarket-ui.js
-// @grant        none
+// @grant        GM_info
 // @run-at       document-idle
 // ==/UserScript==
