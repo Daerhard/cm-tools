@@ -197,46 +197,57 @@
       if (dupCount > 0) repLog(`${dupCount} Duplikat-Listings werden ausgegraut.`);
       if (hrCount  > 0) repLog(`${hrCount} Spekulationskarten (HR) werden ausgegraut.`);
 
-      // 4. Fetch competitor once per unique card, 2 in parallel
+      // 4. Fetch competitor in batches of 50, 1-minute pause between batches
       const primaryListings = [...byCard.values()].map(g => g[0]);
-      const total = primaryListings.length;
+      const total      = primaryListings.length;
+      const BATCH_SIZE  = 50;
+      const BATCH_PAUSE = 60_000;
 
       const compMap = new Map();
       let done = 0;
 
-      await fetchPool(primaryListings, async (primary) => {
-        if (done > 0) await throttle();
-        done++;
-        repLog(`(${done}/${total}) ${primary.cardName} …`);
-
-        let comp = null;
-        let fetchError = null;
-        try {
-          comp = await fetchCheapestCommercial(primary);
-        } catch (err) {
-          fetchError = err.message;
-          repLog(`  Fehler: ${err.message}`, true);
-          if (/Cloudflare-Challenge/i.test(err.message)) throw err;
-          if (/HTTP 429/.test(err.message)) {
-            repLog('  Rate-Limit erreicht — warte 45 Sekunden …');
-            await window.CMCore.sleep(45000);
-          } else {
-            await throttle();
-          }
-          try {
-            comp = await fetchCheapestCommercial(primary);
-            fetchError = null;
-            repLog(`  Retry erfolgreich.`);
-          } catch (err2) {
-            repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
-            if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
-            if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Vorschau abgebrochen. Bitte einige Minuten warten.');
-          }
+      for (let bStart = 0; bStart < primaryListings.length; bStart += BATCH_SIZE) {
+        if (bStart > 0) {
+          const bNum   = Math.floor(bStart / BATCH_SIZE) + 1;
+          const bTotal = Math.ceil(total / BATCH_SIZE);
+          repLog(`Batch ${bNum}/${bTotal} — warte 60 Sekunden …`);
+          await window.CMCore.sleep(BATCH_PAUSE);
         }
 
-        const key = primary.cardUrl.split('?')[0];
-        compMap.set(key, fetchError ? { error: fetchError } : { comp });
-      }, 1);
+        await fetchPool(primaryListings.slice(bStart, bStart + BATCH_SIZE), async (primary) => {
+          if (done > 0) await throttle();
+          done++;
+          repLog(`(${done}/${total}) ${primary.cardName} …`);
+
+          let comp = null;
+          let fetchError = null;
+          try {
+            comp = await fetchCheapestCommercial(primary);
+          } catch (err) {
+            fetchError = err.message;
+            repLog(`  Fehler: ${err.message}`, true);
+            if (/Cloudflare-Challenge/i.test(err.message)) throw err;
+            if (/HTTP 429/.test(err.message)) {
+              repLog('  Rate-Limit trotz Batch — warte 45 Sekunden …');
+              await window.CMCore.sleep(45000);
+            } else {
+              await throttle();
+            }
+            try {
+              comp = await fetchCheapestCommercial(primary);
+              fetchError = null;
+              repLog(`  Retry erfolgreich.`);
+            } catch (err2) {
+              repLog(`  Retry fehlgeschlagen: ${err2.message}`, true);
+              if (/Cloudflare-Challenge/i.test(err2.message)) throw err2;
+              if (/HTTP 429/.test(err2.message)) throw new Error('Rate-Limit nach Wartezeit erneut — Vorschau abgebrochen. Bitte einige Minuten warten.');
+            }
+          }
+
+          const key = primary.cardUrl.split('?')[0];
+          compMap.set(key, fetchError ? { error: fetchError } : { comp });
+        }, 1);
+      }
 
       // 5. Build repData for ALL listings with per-card rule
       repData = myListings.map(listing => {
