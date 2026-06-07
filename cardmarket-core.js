@@ -213,7 +213,7 @@ window.CMCore = (function () {
     const u = new URL(item.cardUrl);
     if (!u.searchParams.has('sellerCountry')) u.searchParams.set('sellerCountry', '7');
     if (!u.searchParams.has('language'))      u.searchParams.set('language', String(DEFAULT_LANGUAGE));
-    if (!u.searchParams.has('amount'))        u.searchParams.set('amount', '1');
+    if (!u.searchParams.has('amount'))        u.searchParams.set('amount', String(Math.min(item.amount ?? 1, 3)));
 
     const res = await fetch(u.toString(), { credentials: 'include' });
     if (!res.ok) throw new Error(`HTTP ${res.status} bei ${item.cardName}`);
