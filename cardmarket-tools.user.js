@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cardmarket Tools
 // @namespace    https://cardmarket.com/tools
-// @version      2.11.0
+// @version      2.12.0
 // @description  Repricer + Stock Filler für YuGiOh
 // @author       Daniel
 // @match        https://www.cardmarket.com/*/YuGiOh/Stock/Offers/*
