@@ -109,27 +109,24 @@
   const tab = panel.querySelector('.tab-repricer');
 
   tab.innerHTML = `
-    <div class="info">
-      <div><span class="key">Set:</span>     <strong>${escapeHtml(setName)}</strong></div>
-      <div><span class="key">Rarity:</span>  <strong>${escapeHtml(rarityDisplay)}</strong></div>
-      <div><span class="key">Account:</span> <strong>${escapeHtml(USERNAME)}</strong>
-        <span style="color:#888">(wird ausgefiltert)</span></div>
+    <div class="tool-info-bar">
+      <span><span class="key">Set</span> <strong>${escapeHtml(setName)}</strong></span>
+      <span><span class="key">Rarity</span> <strong>${escapeHtml(rarityDisplay)}</strong></span>
+      <span style="color:#ccc;font-size:10px;">${escapeHtml(USERNAME)}</span>
     </div>
     ${repricerReady ? `
-      <div class="rule-box">
-        Verarbeitet alle sichtbaren Listings. Preis wird pro Karte anhand der Rarität berechnet.<br>
-        Unterstützte Rarities: Common, Super Rare, Ultra Rare, Secret Rare, Starlight Rare.
+      <div class="tool-toolbar">
+        <button class="action rep-preview-btn">&#9654; Vorschau</button>
+        <button class="action rep-include-btn" style="display:none;background:#6D4C41;">Einbeziehen</button>
+        <button class="action apply rep-apply-btn" disabled>&#10003; Anwenden</button>
       </div>
-      <button class="action rep-preview-btn">Vorschau starten</button>
-      <button class="action apply rep-apply-btn" disabled>Preise anwenden</button>
-      <button class="action rep-include-btn" style="display:none;background:#6D4C41;">
-        Ausgeblendete einbeziehen
-      </button>
       <div class="preview rep-preview-area"></div>
       <div class="log rep-log"></div>
     ` : `
-      <div class="rule-box" style="background:#FFF3E0;border-left:3px solid #ED6C02;">
-        <strong>Keine Listings gefunden.</strong>
+      <div style="padding:12px 14px;">
+        <div style="background:#FFF3E0;border-left:3px solid #ED6C02;padding:8px 10px;border-radius:4px;font-size:12px;">
+          <strong>Keine Listings gefunden.</strong>
+        </div>
       </div>
     `}
   `;
